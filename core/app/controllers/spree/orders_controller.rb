@@ -1,5 +1,7 @@
 module Spree
   class OrdersController < Spree::StoreController
+    ssl_required :show
+
     rescue_from ActiveRecord::RecordNotFound, :with => :render_404
     helper 'spree/products'
 
@@ -52,12 +54,12 @@ module Spree
       params[:products].each do |product_id,variant_id|
         quantity = params[:quantity].to_i if !params[:quantity].is_a?(Hash)
         quantity = params[:quantity][variant_id].to_i if params[:quantity].is_a?(Hash)
-        @order.add_variant(Variant.find(variant_id), quantity) if quantity > 0
+        @order.add_variant(Variant.find(variant_id), quantity, current_currency) if quantity > 0
       end if params[:products]
 
       params[:variants].each do |variant_id, quantity|
         quantity = quantity.to_i
-        @order.add_variant(Variant.find(variant_id), quantity) if quantity > 0
+        @order.add_variant(Variant.find(variant_id), quantity, current_currency) if quantity > 0
       end if params[:variants]
 
       fire_event('spree.cart.add')
