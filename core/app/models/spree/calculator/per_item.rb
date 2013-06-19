@@ -8,13 +8,13 @@ module Spree
     attr_accessible :preferred_amount, :preferred_currency
 
     def self.description
-      I18n.t(:flat_rate_per_item)
+      Spree.t(:flat_rate_per_item)
     end
 
     def compute(object=nil)
       return 0 if object.nil?
       self.preferred_amount * object.line_items.reduce(0) do |sum, value|
-        if !matching_products || matching_products.include?(value.product)
+        if matching_products.blank? || matching_products.include?(value.product)
           value_to_add = value.quantity
         else
           value_to_add = 0
@@ -34,7 +34,9 @@ module Spree
       # Shipping methods do not have promotions attached, but promotions do
       # Therefore we must check for promotions
       if self.calculable.respond_to?(:promotion)
-        self.calculable.promotion.rules.map(&:products).flatten
+        self.calculable.promotion.rules.map do |rule|
+          rule.respond_to?(:products) ? rule.products : []
+        end.flatten
       end
     end
   end

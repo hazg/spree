@@ -7,6 +7,7 @@ module Spree
           class_attribute :previous_states
           class_attribute :checkout_flow
           class_attribute :checkout_steps
+          class_attribute :removed_transitions
 
           def self.checkout_flow(&block)
             if block_given?
@@ -18,10 +19,10 @@ module Spree
           end
 
           def self.define_state_machine!
-            # Needs to be an ordered hash to preserve flow order
-            self.checkout_steps = ActiveSupport::OrderedHash.new
+            self.checkout_steps = {}
             self.next_event_transitions = []
             self.previous_states = [:cart]
+            self.removed_transitions = []
 
             # Build the checkout flow using the checkout_flow defined either
             # within the Order class, or a decorator for that class.
@@ -70,14 +71,12 @@ module Spree
                 end
               end
 
-              before_transition :to => :delivery, :do => :remove_invalid_shipments!
+              before_transition :to => :delivery, :do => :create_proposed_shipments
 
               after_transition :to => :complete, :do => :finalize!
               after_transition :to => :delivery, :do => :create_tax_charge!
               after_transition :to => :resumed,  :do => :after_resume
               after_transition :to => :canceled, :do => :after_cancel
-
-              after_transition :from => :delivery,  :do => :create_shipment!
             end
           end
 
@@ -93,7 +92,40 @@ module Spree
             end
           end
 
+          def self.insert_checkout_step(name, options = {})
+            before = options.delete(:before)
+            after = options.delete(:after) unless before
+            after = self.checkout_steps.keys.last unless before || after
+
+            cloned_steps = self.checkout_steps.clone
+            cloned_removed_transitions = self.removed_transitions.clone
+            self.checkout_flow do
+              cloned_steps.each_pair do |key, value|
+                self.go_to_state(name, options) if key == before
+                self.go_to_state(key, value)
+                self.go_to_state(name, options) if key == after
+              end
+              cloned_removed_transitions.each do |transition|
+                self.remove_transition(transition)
+              end
+            end
+          end
+
+          def self.remove_checkout_step(name)
+            cloned_steps = self.checkout_steps.clone
+            cloned_removed_transitions = self.removed_transitions.clone
+            self.checkout_flow do
+              cloned_steps.each_pair do |key, value|
+                self.go_to_state(key, value) unless key == name
+              end
+              cloned_removed_transitions.each do |transition|
+                self.remove_transition(transition)
+              end
+            end
+          end
+
           def self.remove_transition(options={})
+            self.removed_transitions << options
             if transition = find_transition(options)
               self.next_event_transitions.delete(transition)
             end
@@ -110,7 +142,7 @@ module Spree
           end
 
           def self.checkout_steps
-            @checkout_steps ||= ActiveSupport::OrderedHash.new
+            @checkout_steps ||= {}
           end
 
           def self.add_transition(options)
@@ -126,7 +158,27 @@ module Spree
               end
               checkout_steps << step
             end
-            checkout_steps.map(&:to_s)
+            steps = checkout_steps.map(&:to_s)
+            # Ensure there is always a complete step
+            steps << "complete" unless steps.include?("complete")
+            steps
+          end
+
+          def has_checkout_step?(step)
+            step.present? ? self.checkout_steps.include?(step) : false
+          end
+
+          def checkout_step_index(step)
+            self.checkout_steps.index(step)
+          end
+
+          def self.removed_transitions
+            @removed_transitions ||= []
+          end
+
+          def can_go_to_state?(state)
+            return false unless self.state.present? && has_checkout_step?(state) && has_checkout_step?(self.state)
+            checkout_step_index(state) > checkout_step_index(self.state)
           end
         end
       end

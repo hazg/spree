@@ -7,7 +7,7 @@ module Spree
     let(:taxonomy) { create(:taxonomy) }
     let(:taxon) { create(:taxon, :name => "Ruby", :taxonomy => taxonomy) }
     let(:taxon2) { create(:taxon, :name => "Rails", :taxonomy => taxonomy) }
-    let(:attributes) { ["id", "name", "permalink", "position", "parent_id", "taxonomy_id"] }
+    let(:attributes) { ["id", "name", "pretty_name", "permalink", "position", "parent_id", "taxonomy_id"] }
 
     before do
       stub_authentication!
@@ -17,7 +17,7 @@ module Spree
     end
 
     context "as a normal user" do
-      it "gets all taxons" do
+      it "gets all taxons for a taxonomy" do
         api_get :index, :taxonomy_id => taxonomy.id
 
         json_response.first['name'].should eq taxon.name
@@ -27,12 +27,39 @@ module Spree
         children.first['taxons'].count.should eq 1
       end
 
+      it "gets all taxons" do
+        api_get :index
+
+        json_response.first['name'].should eq taxonomy.root.name
+        children = json_response.first['taxons']
+        children.count.should eq 1
+        children.first['name'].should eq taxon.name
+        children.first['taxons'].count.should eq 1
+      end
+
+      it "can search for a single taxon" do
+        api_get :index, :q => { :name_cont => "Ruby" }
+
+        json_response.count.should == 1
+        json_response.first['name'].should eq "Ruby"
+      end
+
       it "gets a single taxon" do
         api_get :show, :id => taxon.id, :taxonomy_id => taxonomy.id
 
         json_response['name'].should eq taxon.name
         json_response['taxons'].count.should eq 1
       end
+
+      it "gets all taxons in JSTree form" do
+        api_get :jstree, :taxonomy_id => taxonomy.id, :id => taxon.id
+        response = json_response.first
+        response["data"].should eq(taxon2.name)
+        response["attr"].should eq({ "name" => taxon2.name, "id" => taxon2.id})
+        response["state"].should eq("closed")
+      end
+
+
 
       it "can learn how to create a new taxon" do
         api_get :new, :taxonomy_id => taxonomy.id
@@ -61,11 +88,14 @@ module Spree
       sign_in_as_admin!
 
       it "can create" do
-        api_post :create, :taxonomy_id => taxonomy.id, :taxon => { :name => "Colors", :parent_id => taxon.id}
+        api_post :create, :taxonomy_id => taxonomy.id, :taxon => { :name => "Colors" }
         json_response.should have_attributes(attributes)
         response.status.should == 201
 
-        taxon.reload.children.count.should eq 2
+        taxonomy.reload.root.children.count.should eq 2
+
+        Spree::Taxon.last.parent_id.should eq taxonomy.root.id
+        Spree::Taxon.last.taxonomy_id.should eq taxonomy.id
       end
 
       it "cannot create a new taxon with invalid attributes" do
@@ -74,7 +104,19 @@ module Spree
         json_response["error"].should == "Invalid resource. Please fix errors and try again."
         errors = json_response["errors"]
 
-        taxon.reload.children.count.should eq 1
+        taxonomy.reload.root.children.count.should eq 1
+      end
+
+      it "cannot create a new taxon with invalid taxonomy_id" do
+        api_post :create, :taxonomy_id => 1000, :taxon => { :name => "Colors" }
+        response.status.should == 422
+        json_response["error"].should == "Invalid resource. Please fix errors and try again."
+
+        errors = json_response["errors"]
+        errors["taxonomy_id"].should_not be_nil
+        errors["taxonomy_id"].first.should eq "Invalid taxonomy id."
+
+        taxonomy.reload.root.children.count.should eq 1
       end
 
       it "can destroy" do

@@ -18,13 +18,17 @@ module Spree
       ]
     end
 
-    simple_scopes.each do |name|
-      # We should not define price scopes here, as they require something slightly different
-      next if name.to_s.include?("master_price")
-      parts = name.to_s.match(/(.*)_by_(.*)/)
-      order_text = "#{Product.quoted_table_name}.#{parts[2]} #{parts[1] == 'ascend' ?  "ASC" : "DESC"}"
-      self.scope(name.to_s, relation.order(order_text))
+    def self.add_simple_scopes(scopes)
+      scopes.each do |name|
+        # We should not define price scopes here, as they require something slightly different
+        next if name.to_s.include?("master_price")
+        parts = name.to_s.match(/(.*)_by_(.*)/)
+        order_text = "#{Product.quoted_table_name}.#{parts[2]} #{parts[1] == 'ascend' ?  "ASC" : "DESC"}"
+        self.scope(name.to_s, relation.order(order_text))
+      end
     end
+
+    add_simple_scopes simple_scopes
 
     add_search_scope :ascend_by_master_price do
       joins(:master => :default_price).order("#{price_table_name}.amount ASC")
@@ -49,8 +53,8 @@ module Spree
     # This scope selects products in taxon AND all its descendants
     # If you need products only within one taxon use
     #
-    #   Spree::Product.taxons_id_eq(x)
-    # 
+    #   Spree::Product.joins(:taxons).where(Taxon.table_name => { :id => taxon.id })
+    #
     # If you're using count on the result of this scope, you must use the
     # `:distinct` option as well:
     #
@@ -64,8 +68,13 @@ module Spree
     #
     #   SELECT COUNT(*) ...
     add_search_scope :in_taxon do |taxon|
-      select("DISTINCT(spree_products.id), spree_products.*").
-      joins(:taxons).
+      if ActiveRecord::Base.connection.adapter_name == "PostgreSQL"
+        scope = select("DISTINCT ON (spree_products.id) spree_products.*")
+      else
+        scope = select("DISTINCT(spree_products.id), spree_products.*")
+      end
+
+      scope.joins(:taxons).
       where(Taxon.table_name => { :id => taxon.self_and_descendants.map(&:id) })
     end
 
@@ -184,12 +193,16 @@ module Spree
     end
 
     add_search_scope :not_deleted do
-      where(:deleted_at => nil)
+      where("#{Product.quoted_table_name}.deleted_at IS NULL or #{Product.quoted_table_name}.deleted_at >= ?", Time.zone.now)
     end
 
     # Can't use add_search_scope for this as it needs a default argument
     def self.available(available_on = nil, currency = nil)
-      joins(:master => :prices).where("#{Product.quoted_table_name}.available_on <= ?", available_on || Time.now).where('spree_prices.currency' => currency || Spree::Config[:currency]).where('spree_prices.amount IS NOT NULL')
+      scope = joins(:master => :prices).where("#{Product.quoted_table_name}.available_on <= ?", available_on || Time.now)
+      unless Spree::Config.show_products_without_price
+        scope = scope.where('spree_prices.currency' => currency || Spree::Config[:currency]).where('spree_prices.amount IS NOT NULL')
+      end
+      scope
     end
     search_scopes << :available
 
@@ -198,23 +211,22 @@ module Spree
     end
     search_scopes << :active
 
-    add_search_scope :on_hand do
-      variants_table = Variant.table_name
-      where("#{table_name}.id in (select product_id from #{variants_table} where product_id = #{table_name}.id and #{variants_table}.deleted_at IS NULL group by product_id having sum(count_on_hand) > 0)")
-    end
-
     add_search_scope :taxons_name_eq do |name|
       group("spree_products.id").joins(:taxons).where(Taxon.arel_table[:name].eq(name))
     end
 
-    if (ActiveRecord::Base.connection.adapter_name == 'PostgreSQL')
-      if table_exists?
-        scope :group_by_products_id, { :group => column_names.map { |col_name| "#{table_name}.#{col_name}"} }
+    # This method needs to be defined *as a method*, otherwise it will cause the
+    # problem shown in #1247.
+    def self.group_by_products_id
+      if (ActiveRecord::Base.connection.adapter_name == 'PostgreSQL')
+        # Need to check, otherwise `column_names` will fail
+        if table_exists?
+          group(column_names.map { |col_name| "#{table_name}.#{col_name}"})
+        end
+      else
+        group("#{self.quoted_table_name}.id")
       end
-    else
-      scope :group_by_products_id, { :group => "#{self.quoted_table_name}.id" }
     end
-    search_scopes << :group_by_products_id
 
     private
 
@@ -224,7 +236,7 @@ module Spree
 
       # specifically avoid having an order for taxon search (conflicts with main order)
       def self.prepare_taxon_conditions(taxons)
-        ids = taxons.map { |taxon| taxon.self_and_descendants.map(&:id) }.flatten.uniq
+        ids = taxons.map { |taxon| taxon.self_and_descendants.pluck(:id) }.flatten.uniq
         joins(:taxons).where("#{Taxon.table_name}.id" => ids)
       end
 

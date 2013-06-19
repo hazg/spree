@@ -1,68 +1,67 @@
 module Spree
   module Api
     class OrdersController < Spree::Api::BaseController
-      before_filter :authorize_read!, :except => [:index, :search, :create]
 
-      def index
-        # should probably look at turning this into a CanCan step
-        raise CanCan::AccessDenied unless current_api_user.has_spree_role?("admin")
-        @orders = Order.ransack(params[:q]).result.page(params[:page]).per(params[:per_page])
-      end
-
-      def show
-      end
-
-      def create
-        @order = Order.build_from_api(current_api_user, nested_params)
-        next!(:status => 201)
-      end
-
-      def update
-        authorize! :update, Order
-        if order.update_attributes(nested_params)
-          order.update!
-          render :show
-        else
-          invalid_resource!(order)
-        end
-      end
-
-      def address
-        order.build_ship_address(params[:shipping_address]) if params[:shipping_address]
-        order.build_bill_address(params[:billing_address]) if params[:billing_address]
-        next!
-      end
-
-      def delivery
-        begin
-          ShippingMethod.find(params[:shipping_method_id])
-        rescue ActiveRecord::RecordNotFound
-          render :invalid_shipping_method, :status => 422
-        else
-          order.update_attribute(:shipping_method_id, params[:shipping_method_id])
-          next!
+      # Dynamically defines our stores checkout steps to ensure we check authorization on each step.
+      Order.checkout_steps.keys.each do |step|
+        define_method step do
+          find_order
+          authorize! :update, @order, params[:token]
         end
       end
 
       def cancel
-        order.cancel!
+        find_order
+        authorize! :update, @order, params[:token]
+        @order.cancel!
         render :show
       end
 
+      def create
+        authorize! :create, Order
+        @order = Order.build_from_api(current_api_user, nested_params)
+        respond_with(@order, :default_template => :show, :status => 201)
+      end
+
       def empty
-        order.line_items.destroy_all
-        order.update!
+        find_order
+        @order.line_items.destroy_all
+        @order.update!
         render :text => nil, :status => 200
+      end
+
+      def index
+        authorize! :index, Order
+        @orders = Order.ransack(params[:q]).result.page(params[:page]).per(params[:per_page])
+        respond_with(@orders)
+      end
+
+      def show
+        find_order
+        respond_with(@order)
+      end
+
+      def update
+        find_order
+        # Parsing line items through as an update_attributes call in the API will result in
+        # many line items for the same variant_id being created. We must be smarter about this,
+        # hence the use of the update_line_items method, defined within order_decorator.rb.
+        order_params = nested_params
+        line_items = order_params.delete("line_items_attributes")
+        if @order.update_attributes(order_params)
+          @order.update_line_items(line_items)
+          @order.line_items.reload
+          @order.update!
+          respond_with(@order, :default_template => :show)
+        else
+          invalid_resource!(@order)
+        end
       end
 
       private
 
       def nested_params
         map_nested_attributes_keys Order, params[:order] || {}
-      end
-
-      def order
-        @order ||= Order.find_by_number!(params[:id])
       end
 
       def next!(options={})
@@ -73,9 +72,11 @@ module Spree
         end
       end
 
-      def authorize_read!
-        authorize! :read, order
+      def find_order
+        @order = Order.find_by_number!(params[:id])
+        authorize! :update, @order, params[:order_token]
       end
+
     end
   end
 end

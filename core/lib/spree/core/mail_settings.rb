@@ -1,37 +1,60 @@
 module Spree
   module Core
-    module MailSettings
+    class MailSettings
+      MAIL_AUTH = ['None', 'plain', 'login', 'cram_md5']
+      SECURE_CONNECTION_TYPES = ['None','SSL','TLS']
 
-      # Override the Rails application mail settings based on preference.
-      # This makes it possible to configure the mail settings
-      # through an admin interface instead of requiring changes to the Rails envrionment file.
+      # Override the Rails application mail settings based on preferences
+      # This makes it possible to configure the mail settings through an admin
+      # interface instead of requiring changes to the Rails envrionment file
       def self.init
-        ActionMailer::Base.default_url_options[:host] = Spree::Config[:site_url]
-        return unless mail_method = Spree::MailMethod.current
-        if mail_method.prefers_enable_mail_delivery?
-          mail_server_settings = {
-            :address => mail_method.preferred_mail_host,
-            :domain => mail_method.preferred_mail_domain,
-            :port => mail_method.preferred_mail_port,
-            :authentication => mail_method.preferred_mail_auth_type
-          }
+        self.new.override! if override?
+      end
 
-          if mail_method.preferred_mail_auth_type != 'none'
-            mail_server_settings[:user_name] = mail_method.preferred_smtp_username
-            mail_server_settings[:password] = mail_method.preferred_smtp_password
-          end
+      def self.override?
+        Config.override_actionmailer_config
+      end
 
-          tls = mail_method.preferred_secure_connection_type == 'TLS'
-          mail_server_settings[:enable_starttls_auto] = tls
-
+      def override!
+        if Config.enable_mail_delivery
+          ActionMailer::Base.default_url_options[:host] ||= Config.site_url
           ActionMailer::Base.smtp_settings = mail_server_settings
           ActionMailer::Base.perform_deliveries = true
         else
-          #logger.warn "NOTICE: Mail not enabled"
           ActionMailer::Base.perform_deliveries = false
         end
       end
 
+      private
+        def mail_server_settings
+          settings = if need_authentication?
+            basic_settings.merge(user_credentials)
+          else
+            basic_settings
+          end
+
+          settings.merge :enable_starttls_auto => secure_connection?
+        end
+
+        def user_credentials
+          { :user_name => Config.smtp_username,
+            :password => Config.smtp_password }
+        end
+
+        def basic_settings
+          { :address => Config.mail_host,
+            :domain => Config.mail_domain,
+            :port => Config.mail_port,
+            :authentication => Config.mail_auth_type }
+        end
+
+        def need_authentication?
+          Config.mail_auth_type != 'None'
+        end
+
+        def secure_connection?
+          Config.secure_connection_type == 'TLS'
+        end
     end
   end
 end

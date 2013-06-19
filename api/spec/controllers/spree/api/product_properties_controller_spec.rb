@@ -6,8 +6,8 @@ module Spree
     render_views
 
     let!(:product) { create(:product) }
-    let!(:property_1) {product.product_properties.create(:property_name => "My Property 1", :value => "my value 1")}
-    let!(:property_2) {product.product_properties.create(:property_name => "My Property 2", :value => "my value 2")}
+    let!(:property_1) {product.product_properties.create(:property_name => "My Property 1", :value => "my value 1", :position => 0)}
+    let!(:property_2) {product.product_properties.create(:property_name => "My Property 2", :value => "my value 2", :position => 1)}
 
     let(:attributes) { [:id, :product_id, :property_id, :value, :property_name] }
     let(:resource_scoping) { { :product_id => product.to_param } }
@@ -18,7 +18,7 @@ module Spree
 
     context "if product is deleted" do
       before do
-        product.update_column(:deleted_at, Time.now)
+        product.update_column(:deleted_at, 1.day.ago)
       end
 
       it "can not see a list of product properties" do
@@ -40,7 +40,7 @@ module Spree
       json_response['pages'].should == 2
     end
 
-    it 'can query the results through a paramter' do
+    it 'can query the results through a parameter' do
       Spree::ProductProperty.last.update_attribute(:value, 'loose')
       property = Spree::ProductProperty.last
       api_get :index, :q => { :value_cont => 'loose' }
@@ -91,7 +91,7 @@ module Spree
         response.status.should == 200
       end
 
-      it "can delete a variant" do
+      it "can delete a product property" do
         api_delete :destroy, :id => property_1.property_name
         response.status.should == 204
         lambda { property_1.reload }.should raise_error(ActiveRecord::RecordNotFound)

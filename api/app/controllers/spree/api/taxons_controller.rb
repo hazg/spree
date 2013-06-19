@@ -1,47 +1,74 @@
 module Spree
   module Api
     class TaxonsController < Spree::Api::BaseController
+
       def index
-        @taxons = taxonomy.root.children
+        if taxonomy
+          @taxons = taxonomy.root.children
+        else
+          if params[:ids]
+            @taxons = Taxon.accessible_by(current_ability, :read).where(:id => params[:ids].split(","))
+          else
+            @taxons = Taxon.accessible_by(current_ability, :read).ransack(params[:q]).result
+          end
+        end
+        respond_with(@taxons)
       end
 
       def show
         @taxon = taxon
+        respond_with(@taxon)
+      end
+
+      def jstree
+        show
       end
 
       def create
         authorize! :create, Taxon
         @taxon = Taxon.new(params[:taxon])
+        @taxon.taxonomy_id = params[:taxonomy_id]
+        taxonomy = Taxonomy.find_by_id(params[:taxonomy_id])
+
+        if taxonomy.nil?
+          @taxon.errors[:taxonomy_id] = I18n.t(:invalid_taxonomy_id, :scope => 'spree.api')
+          invalid_resource!(@taxon) and return
+        end
+
+        @taxon.parent_id = taxonomy.root.id unless params[:taxon][:parent_id]
+
         if @taxon.save
-          render :show, :status => 201
+          respond_with(@taxon, :status => 201, :default_template => :show)
         else
           invalid_resource!(@taxon)
         end
       end
 
       def update
-        authorize! :update, Taxon
+        authorize! :update, taxon
         if taxon.update_attributes(params[:taxon])
-          render :show, :status => 200
+          respond_with(taxon, :status => 200, :default_template => :show)
         else
           invalid_resource!(taxon)
         end
       end
 
       def destroy
-        authorize! :delete, Taxon
+        authorize! :destroy, taxon
         taxon.destroy
-        render :text => nil, :status => 204
+        respond_with(taxon, :status => 204)
       end
 
       private
 
       def taxonomy
-        @taxonomy ||= Taxonomy.find(params[:taxonomy_id])
+        if params[:taxonomy_id].present?
+          @taxonomy ||= Taxonomy.accessible_by(current_ability, :read).find(params[:taxonomy_id])
+        end
       end
 
       def taxon
-        @taxon ||= taxonomy.taxons.find(params[:id])
+        @taxon ||= taxonomy.taxons.accessible_by(current_ability, :read).find(params[:id])
       end
 
     end

@@ -4,17 +4,15 @@ module Spree
   describe Api::VariantsController do
     render_views
 
-
     let!(:product) { create(:product) }
     let!(:variant) do
       variant = product.master
       variant.option_values << create(:option_value)
       variant
     end
-    let!(:attributes) { [:id, :name, :count_on_hand,
-                         :sku, :price, :weight, :height,
+    let!(:attributes) { [:id, :name, :sku, :price, :weight, :height,
                          :width, :depth, :is_master, :cost_price,
-                         :permalink] }
+                         :permalink, :description] }
 
     before do
       stub_authentication!
@@ -50,6 +48,14 @@ module Spree
                                                  :presentation,
                                                  :option_type_name,
                                                  :option_type_id])
+    end
+
+    it "variants returned contain images data" do
+      variant.images.create!(:attachment => image("thinking-cat.jpg"))
+
+      api_get :index
+
+      json_response["variants"].last.should have_attributes([:images])
     end
 
     # Regression test for #2141
@@ -92,6 +98,19 @@ module Spree
                                                  :option_type_id])
     end
 
+    it "can see a single variant with images" do
+      variant.images.create!(:attachment => image("thinking-cat.jpg"))
+
+      api_get :show, :id => variant.to_param
+
+      json_response.should have_attributes(attributes + [:images])
+      option_values = json_response["option_values"]
+      option_values.first.should have_attributes([:name,
+                                                 :presentation,
+                                                 :option_type_name,
+                                                 :option_type_id])
+    end
+
     it "can learn how to create a new variant" do
       api_get :new
       json_response["attributes"].should == attributes.map(&:to_s)
@@ -105,12 +124,12 @@ module Spree
 
     it "cannot update a variant" do
       api_put :update, :id => variant.to_param, :variant => { :sku => "12345" }
-      assert_unauthorized!
+      assert_not_found!
     end
 
     it "cannot delete a variant" do
       api_delete :destroy, :id => variant.to_param
-      assert_unauthorized!
+      assert_not_found!
       lambda { variant.reload }.should_not raise_error
     end
 
@@ -134,6 +153,7 @@ module Spree
         api_post :create, :variant => { :sku => "12345" }
         json_response.should have_attributes(attributes)
         response.status.should == 201
+        json_response["sku"].should == "12345"
 
         variant.product.variants.count.should == 1
       end
@@ -149,7 +169,6 @@ module Spree
         lambda { variant.reload }.should raise_error(ActiveRecord::RecordNotFound)
       end
     end
-
 
   end
 end

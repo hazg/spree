@@ -1,11 +1,14 @@
 module Spree
   class Address < ActiveRecord::Base
-    belongs_to :country
-    belongs_to :state
+    belongs_to :country, class_name: "Spree::Country"
+    belongs_to :state, class_name: "Spree::State"
 
     has_many :shipments
 
-    validates :firstname, :lastname, :address1, :city, :zipcode, :country, :phone, :presence => true
+    validates :firstname, :lastname, :address1, :city, :country, presence: true
+    validates :zipcode, presence: true, if: :require_zipcode?
+    validates :phone, presence: true, if: :require_phone?
+
     validate :state_validate
 
     attr_accessible :firstname, :lastname, :address1, :address2,
@@ -13,17 +16,12 @@ module Spree
                     :country, :state, :phone, :state_name,
                     :company, :alternative_phone
 
-    # Disconnected since there's no code to display error messages yet OR matching client-side validation
-    def phone_validate
-      return if phone.blank?
-      n_digits = phone.scan(/[0-9]/).size
-      valid_chars = (phone =~ /^[-+()\/\s\d]+$/)
-      errors.add :phone, :invalid unless (n_digits > 5 && valid_chars)
-    end
+    alias_attribute :first_name, :firstname
+    alias_attribute :last_name, :lastname
 
     def self.default
       country = Spree::Country.find(Spree::Config[:default_country_id]) rescue Spree::Country.first
-      new({:country => country}, :without_protection => true)
+      new({ country: country }, without_protection: true)
     end
 
     # Can modify an address if it's not been used in an order (but checkouts controller has finer control)
@@ -70,18 +68,25 @@ module Spree
     # Generates an ActiveMerchant compatible address hash
     def active_merchant_hash
       {
-        :name => full_name,
-        :address1 => address1,
-        :address2 => address2,
-        :city => city,
-        :state => state_text,
-        :zip => zipcode,
-        :country => country.try(:iso),
-        :phone => phone
+        name: full_name,
+        address1: address1,
+        address2: address2,
+        city: city,
+        state: state_text,
+        zip: zipcode,
+        country: country.try(:iso),
+        phone: phone
       }
     end
 
     private
+      def require_phone?
+        true
+      end
+
+      def require_zipcode?
+        true
+      end
 
       def state_validate
         # Skip state validation without country (also required)
@@ -119,6 +124,5 @@ module Spree
         # ensure at least one state field is populated
         errors.add :state, :blank if state.blank? && state_name.blank?
       end
-
   end
 end

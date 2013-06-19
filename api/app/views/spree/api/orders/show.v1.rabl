@@ -1,5 +1,5 @@
 object @order
-attributes *order_attributes
+extends "spree/api/orders/order"
 
 if lookup_context.find_all("spree/api/orders/#{@order.state}").present?
   extends "spree/api/orders/#{@order.state}"
@@ -26,4 +26,12 @@ end
 
 child :shipments => :shipments do
   extends "spree/api/shipments/show"
+end
+
+child :adjustments => :adjustments do
+  extends "spree/api/adjustments/show"
+end
+
+child :credit_cards => :credit_cards do
+  extends "spree/api/credit_cards/show"
 end

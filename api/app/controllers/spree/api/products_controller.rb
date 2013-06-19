@@ -1,12 +1,21 @@
 module Spree
   module Api
     class ProductsController < Spree::Api::BaseController
+
       def index
-        @products = product_scope.ransack(params[:q]).result.page(params[:page]).per(params[:per_page])
+        if params[:ids]
+          @products = product_scope.accessible_by(current_ability, :read).where(:id => params[:ids])
+        else
+          @products = product_scope.accessible_by(current_ability, :read).ransack(params[:q]).result
+        end
+
+        @products = @products.page(params[:page]).per(params[:per_page])
+        respond_with(@products)
       end
 
       def show
         @product = find_product(params[:id])
+        respond_with(@product)
       end
 
       def new
@@ -17,28 +26,28 @@ module Spree
         params[:product][:available_on] ||= Time.now
         @product = Product.new(params[:product])
         if @product.save
-          render :show, :status => 201
+          respond_with(@product, :status => 201, :default_template => :show)
         else
           invalid_resource!(@product)
         end
       end
 
       def update
-        authorize! :update, Product
         @product = find_product(params[:id])
+        authorize! :update, @product
         if @product.update_attributes(params[:product])
-          render :show, :status => 200
+          respond_with(@product, :status => 200, :default_template => :show)
         else
           invalid_resource!(@product)
         end
       end
 
       def destroy
-        authorize! :delete, Product
         @product = find_product(params[:id])
+        authorize! :destroy, @product
         @product.update_attribute(:deleted_at, Time.now)
         @product.variants_including_master.update_all(:deleted_at => Time.now)
-        render :text => nil, :status => 204
+        respond_with(@product, :status => 204)
       end
     end
   end

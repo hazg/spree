@@ -6,13 +6,18 @@ module Spree
           JSON.parse(response.body)
         end
 
+        def assert_not_found!
+          json_response.should == { "error" => "The resource you were looking for could not be found." }
+          response.status.should == 404
+        end
+
         def assert_unauthorized!
           json_response.should == { "error" => "You are not authorized to perform that action." }
           response.status.should == 401
         end
 
         def stub_authentication!
-          controller.stub :check_for_api_key
+          controller.stub :check_for_user_or_api_key
           Spree::LegacyUser.stub :find_by_spree_api_key => current_api_user
         end
 

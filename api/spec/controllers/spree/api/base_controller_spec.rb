@@ -4,7 +4,20 @@ describe Spree::Api::BaseController do
   render_views
   controller(Spree::Api::BaseController) do
     def index
-      render :json => { "products" => [] }
+      render :text => { "products" => [] }.to_json
+    end
+  end
+
+  context "signed in as a user using an authentication extension" do
+    before do
+      controller.stub :try_spree_current_user => stub(:email => "spree@example.com")
+      Spree::Api::Config[:requires_authentication] = true
+    end
+
+    it "can make a request" do
+      api_get :index
+      json_response.should == { "products" => [] }
+      response.status.should == 200
     end
   end
 
@@ -26,6 +39,13 @@ describe Spree::Api::BaseController do
       get :index, :token => "fake_key"
       json_response.should == { "error" => "Invalid API key (fake_key) specified." }
     end
+  end
+
+  it 'handles exceptions' do
+    subject.should_receive(:authenticate_user).and_return(true)
+    subject.should_receive(:index).and_raise(Exception.new("no joy"))
+    get :index, :token => "fake_key"
+    json_response.should == { "exception" => "no joy" }
   end
 
   it "maps symantec keys to nested_attributes keys" do

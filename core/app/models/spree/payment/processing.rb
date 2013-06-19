@@ -5,14 +5,19 @@ module Spree
         if payment_method && payment_method.source_required?
           if source
             if !processing?
-              if Spree::Config[:auto_capture]
-                purchase!
+              if payment_method.supports?(source)
+                if payment_method.auto_capture?
+                  purchase!
+                else
+                  authorize!
+                end
               else
-                authorize!
+                invalidate!
+                raise Core::GatewayError.new(I18n.t(:payment_method_not_supported))
               end
             end
           else
-            raise Core::GatewayError.new(I18n.t(:payment_processing_failed))
+            raise Core::GatewayError.new(Spree.t(:payment_processing_failed))
           end
         end
       end
@@ -39,7 +44,7 @@ module Spree
             response = payment_method.capture(self, source, gateway_options)
           else
             # Standard ActiveMerchant capture usage
-            response = payment_method.capture((amount * 100).round,
+            response = payment_method.capture(money.money.cents,
                                               response_code,
                                               gateway_options)
           end
@@ -110,19 +115,22 @@ module Spree
     def gateway_options
       options = { :email    => order.email,
                   :customer => order.email,
-                  :ip       => '192.168.1.100', # TODO: Use an actual IP
-                  :order_id => order.number }
+                  :ip       => order.last_ip_address,
+                  # Need to pass in a unique identifier here to make some
+                  # payment gateways happy.
+                  #
+                  # For more information, please see Spree::Payment#set_unique_identifier
+                  :order_id => gateway_order_id }
 
       options.merge!({ :shipping => order.ship_total * 100,
                        :tax      => order.tax_total * 100,
-                       :subtotal => order.item_total * 100 })
-
-      options.merge!({ :currency => currency })
+                       :subtotal => order.item_total * 100,
+                       :discount => order.promo_total * 100,
+                       :currency => currency })
 
       options.merge!({ :billing_address  => order.bill_address.try(:active_merchant_hash),
                       :shipping_address => order.ship_address.try(:active_merchant_hash) })
 
-      options.merge!(:discount => promo_total) if respond_to?(:promo_total)
       options
     end
 
@@ -170,11 +178,11 @@ module Spree
       if error.is_a? ActiveMerchant::Billing::Response
         text = error.params['message'] || error.params['response_reason_text'] || error.message
       elsif error.is_a? ActiveMerchant::ConnectionError
-        text = I18n.t(:unable_to_connect_to_gateway)
+        text = Spree.t(:unable_to_connect_to_gateway)
       else
         text = error.to_s
       end
-      logger.error(I18n.t(:gateway_error))
+      logger.error(Spree.t(:gateway_error))
       logger.error("  #{error.to_yaml}")
       raise Core::GatewayError.new(text)
     end
@@ -183,9 +191,13 @@ module Spree
     # Ex. When testing in staging environment with a copy of production data.
     def check_environment
       return if payment_method.environment == Rails.env
-      message = I18n.t(:gateway_config_unavailable) + " - #{Rails.env}"
+      message = Spree.t(:gateway_config_unavailable) + " - #{Rails.env}"
       raise Core::GatewayError.new(message)
     end
 
+    # The unique identifier to be passed in to the payment gateway
+    def gateway_order_id
+      "#{order.number}-#{self.identifier}"
+    end
   end
 end
